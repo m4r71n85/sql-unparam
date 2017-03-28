@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title></title>
+	<script src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-1.12.4.min.js"></script>
+	<script src="http://files.aw20.net/jquery-linedtextarea/jquery-linedtextarea.js"></script>
+	<script src="https://unpkg.com/sql-formatter@1.1.2/dist/sql-formatter.min.js"></script>
+	<link href="http://files.aw20.net/jquery-linedtextarea/jquery-linedtextarea.css" type="text/css" rel="stylesheet" />
+</head>
+<body>
+<!-- Paramed query -->
+<textarea style="width: 100%; height: 300px" id="paramed">
+exec sp_executesql N'
+                DECLARE @Claims TABLE (
+	                [Id] INT, 
+	                [Script.Id] INT, 
+	                [RxNumber] VARCHAR(100), 
+	                [SoldOn] DATETIME NULL, 
+	                [Patient] VARCHAR(100), 
+	                [Product] VARCHAR(255), 
+	                [Payor] VARCHAR(100),
+                    [CopayNetwork] VARCHAR(100),
+                    [PaymentOption] INT,
+	                [Age] INT, 
+	                [Balance] DECIMAL(9,2),
+	                [Amount] DECIMAL(9,2),
+                    [BillingStatus] INT,
+                    [FollowUpon] DATETIME NULL
+                );
+
+                WITH
+                Settlements AS (
+	                SELECT
+		                t.[Claim.Id],
+		                SUM(t.[Amount]) [Paid]
+	                FROM Settlement t
+	                INNER JOIN Payment y ON t.[Payment.Id] = y.[Id]
+	                WHERE
+		                y.[Date] <= @date
+	                GROUP BY t.[Claim.Id]
+                ),
+                Claims AS (
+	                SELECT
+		                c.[Id], 
+		                c.[Script.Id],
+		                s.[RxNumber],
+		                s.[SoldOn],
+		                n.[Name] [Patient],
+		                d.[Name] [Product],
+		                c.[Insurance.Payor] [Payor],
+                        s.[CopayNetwork] [CopayNetwork],
+                        c.[PaymentOption] [PaymentOption],
+		                CASE WHEN s.[SoldOn] IS NOT NULL THEN DATEDIFF(dd, s.[SoldOn], @date) ELSE NULL END [Age],
+		                c.[Amount] - COALESCE(t.[Paid], 0) [Balance],
+                        c.[Amount],
+                        c.[BillingStatus],
+                        c.[FollowUpOn]
+	                FROM Claim c
+		                INNER JOIN Script s ON c.[Script.Id] = s.[Id] AND s.[SoldOn] <= @date
+		                INNER JOIN Patient n ON s.[Patient.Id] = n.[Id]
+		                INNER JOIN Product d ON s.[Product.Id] = d.[Id]
+		                LEFT JOIN Settlements t ON c.[Id] = t.[Claim.Id]
+	                WHERE
+                        s.[Ppo] = 0
+                        AND s.[Location] IS NULL
+		                AND (@paymentSource <> 10 OR c.[Target] IN (10, 20))
+		                AND (@paymentSource = 10 OR c.[Target] = @paymentSource + 10)
+		                AND ((@billingAge IS NULL OR @billingAge <> 0) OR s.[SoldOn] BETWEEN DATEADD(dd, -30, @date) AND @date)
+		                AND ((@billingAge IS NULL OR @billingAge <> 1) OR s.[SoldOn] BETWEEN DATEADD(dd, -60, @date) AND DATEADD(dd, -31, @date))
+		                AND ((@billingAge IS NULL OR @billingAge <> 2) OR s.[SoldOn] BETWEEN DATEADD(dd, -90, @date) AND DATEADD(dd, -61, @date))
+		                AND ((@billingAge IS NULL OR @billingAge <> 3) OR s.[SoldOn] BETWEEN DATEADD(dd, -120, @date) AND DATEADD(dd, -91, @date))
+		                AND ((@billingAge IS NULL OR @billingAge <> 4) OR s.[SoldOn] <= DATEADD(dd, -121, @date))
+                        AND (@billingStatus IS NULL OR c.[BillingStatus] = @billingStatus)
+                        AND (@followUpOnFrom IS NULL OR @followUpOnFrom <= c.[FollowUpOn])
+                        AND (@followUpOnTo IS NULL OR c.[FollowUpOn] <= @followUpOnTo)
+                        AND (@shipOnFrom IS NULL OR @shipOnFrom <= s.[ShipOn])
+                        AND (@shipOnTo IS NULL OR s.[ShipOn] <= @shipOnTo)
+		                AND (@payor IS NULL OR c.[Insurance.Payor] = @payor)
+		                AND (@copayNetwork IS NULL OR s.[CopayNetwork] = @copayNetwork)
+		                AND (@patientId IS NULL OR n.[Id] = @patientId)
+		                AND (@patientName IS NULL OR n.[Name] LIKE @patientName + '%')
+		                AND (@paymentOption IS NULL OR c.[PaymentOption] = @paymentOption)
+	                GROUP BY c.[Id], c.[Script.Id], s.[RxNumber], s.[SoldOn], n.[Name], d.[Name], c.[Insurance.Payor], s.[CopayNetwork], c.[PaymentOption], c.[Amount], t.[Paid], c.[BillingStatus], c.[FollowUpOn]
+	                HAVING c.[Amount] - COALESCE(t.[Paid], 0) <> 0
+                )
+
+                INSERT INTO @Claims
+                SELECT * FROM Claims;
+
+                SELECT COUNT(*) FROM @Claims;
+
+                SELECT * FROM @Claims c
+                ORDER BY
+	                CASE WHEN c.[SoldOn] IS NULL THEN 0 ELSE 1 END,
+	                c.[SoldOn]
+                OFFSET (@page - 1) * @rowsPerPage ROWS
+                FETCH NEXT @rowsPerPage ROWS ONLY;
+
+                SELECT SUM([Balance]) FROM @Claims;
+                ',N'@date datetime,@paymentSource int,@billingAge nvarchar(4000),@billingStatus nvarchar(4000),@followUpOnFrom nvarchar(4000),@followUpOnTo nvarchar(4000),@shipOnFrom nvarchar(4000),@shipOnTo nvarchar(4000),@payor nvarchar(4000),@copayNetwork nvarchar(4000),@patientId nvarchar(4000),@patientName nvarchar(4000),@paymentOption nvarchar(4000),@page int,@rowsPerPage int',@date='2016-11-08 00:00:00',@paymentSource=30,@billingAge=NULL,@billingStatus=NULL,@followUpOnFrom=NULL,@followUpOnTo=NULL,@shipOnFrom=NULL,@shipOnTo=NULL,@payor=NULL,@copayNetwork=NULL,@patientId=NULL,@patientName=NULL,@paymentOption=NULL,@page=1,@rowsPerPage=50
+</textarea>
+
+<!-- Params --><br>
+<button id="getParams">Get Params</button>
+<textarea id="params" style="width: 100%; height: 100px" id="unparamed">
+</textarea>
+
+<!-- Unparamed query --><br>
+<button id="unparam">Unparam</button>
+<textarea style="width: 100%; height: 300px" id="unparamed">
+</textarea>
+
+
+<script>
+$(function() {
+	$("textarea").linedtextarea();
+});
+
+$("#getParams").click(function(){
+		var query = $("#paramed").val().replace("exec sp_executesql N'", '');
+		query = query.split("',N'");
+		var params = query[1].split("'");
+		query = query[0];
+		params.splice(0, 1);
+		params = params.join("'");
+		params = params.split(",")
+		params.splice(0, 1);
+		for (var i = params.length - 1; i >= 0; i--) {
+			params[i] = params[i].replace('N\'', '\'').trim()
+		}
+		$("#params").val(params.join("\n"));
+	});
+$("#unparam").click(function(){
+	var params = $("#params").val().split(/\n/);
+	var query = $("#paramed").val().replace("exec sp_executesql N'", '');
+	query = query.split("',N'");
+	query = query[0];
+	params = params.sort(function(a,b){
+		var a1 = a.substring(1).split("=")[0];
+		var b1 = b.substring(1).split("=")[0];
+		if(isNaN(a1-b1)){  return a1 > b1 ? -1 : 1; }
+		return b1-a1;
+	});
+
+	params.forEach(function(param) {
+		var splitedParams = param.split("=");
+		if(splitedParams[0]!= ""){
+			query = query.split(splitedParams[0]).join(splitedParams[1]);
+		}
+	});
+	var unformatted = query.trim();
+	var formatted = sqlFormatter.format(unformatted, {language: 'sql'});
+	$("#unparamed").val(formatted);
+});
+</script>
+</body>
+</html>
