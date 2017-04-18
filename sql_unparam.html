@@ -102,6 +102,11 @@ exec sp_executesql N'
 
 <!-- Params --><br>
 <button id="getParams">Get Params</button>
+
+<label>
+	<input id="shouldFormat" type="checkbox" checked="checked"> format
+</label>
+
 <textarea id="params" style="width: 100%; height: 100px" id="unparamed">
 </textarea>
 
@@ -133,8 +138,11 @@ $("#getParams").click(function(){
 $("#unparam").click(function(){
 	var params = $("#params").val().split(/\n/);
 	var query = $("#paramed").val().replace("exec sp_executesql N'", '');
-	query = query.split("',N'");
-	query = query[0];
+	
+	if(query.split("',N'").length){
+		query = query.split("',N'")[0];	
+	}
+
 	params = params.sort(function(a,b){
 		var a1 = a.substring(1).split("=")[0];
 		var b1 = b.substring(1).split("=")[0];
@@ -150,7 +158,8 @@ $("#unparam").click(function(){
 	});
 	var unformatted = query.trim();
 	var formatted = sqlFormatter.format(unformatted, {language: 'sql'});
-	$("#unparamed").val(formatted);
+	formatted = formatted.replace(new RegExp(find, '\* \='), '*=');
+	$("#unparamed").val($("#shouldFormat").is(':checked') ? formatted : unformatted);
 });
 </script>
 </body>
